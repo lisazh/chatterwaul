@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <unistd.h>
 
 #include <netinet/in.h>
@@ -31,27 +32,28 @@ static char *option_string = "h:t:u:n:";
 /* These variables provide some extra clues about what you will need to
  * implement.
  */
-char server_host_name[MAX_HOST_NAME_LEN];
+char server_host_name[MAX_HOST_NAME_LEN] = "";
 
 /* For control messages */
-u_int16_t server_tcp_port;
+u_int16_t server_tcp_port = 0;
 struct sockaddr_in server_tcp_addr;
+int tcp_socket_fd = -1;
 
 /* For chat messages */
-u_int16_t server_udp_port;
+u_int16_t server_udp_port = 0;
 struct sockaddr_in server_udp_addr;
 int udp_socket_fd;
 
 /* Needed for REGISTER_REQUEST */
-char member_name[MAX_MEMBER_NAME_LEN];
+char member_name[MAX_MEMBER_NAME_LEN] = "";
 u_int16_t client_udp_port; 
 
 /* Initialize with value returned in REGISTER_SUCC response */
 u_int16_t member_id = 0;
 
 /* For communication with receiver process */
-pid_t receiver_pid;
-char ctrl2rcvr_fname[MAX_FILE_NAME_LEN];
+pid_t receiver_pid = -1;
+char ctrl2rcvr_fname[MAX_FILE_NAME_LEN] = "";
 int ctrl2rcvr_qid;
 
 /* MAX_MSG_LEN is maximum size of a message, including header+body.
@@ -296,6 +298,8 @@ int init_client()
 	 *
 	 * YOUR CODE HERE
 	 */
+	 
+	 
 
 #ifdef USE_LOCN_SERVER
 
@@ -304,10 +308,57 @@ int init_client()
 	 */
 
 #endif
- 
+	
+	// as of here, we should have access to:
+	// server_host_name,server_tcp_port,server_udp_port,member_name
+	
 	/* 1. initialization to allow TCP-based control messages to chat server */
+	
+	int status;
+	struct addrinfo hints;
+	struct addrinfo *res;  // will point to the results
 
-
+	memset(&hints, 0, sizeof hints); // make sure the struct is empty
+	hints.ai_family = AF_INET;     // don't care IPv4 or IPv6
+	hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+	
+	// get a string representation of the port number
+	char server_tcp_port_str[20];
+	sprintf(server_tcp_port_str, "%d", server_tcp_port);
+	
+	status = getaddrinfo(server_host_name, server_tcp_port_str, &hints, &res);
+	assert(status == 0);
+	
+	// make a tcp socket
+	tcp_socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	assert(tcp_socket_fd >= 0);
+	
+	// connect to the server
+	status = connect(tcp_socket_fd, res->ai_addr, res->ai_addrlen);
+	assert(status == 0);
+	
+	// send a test message
+	char *msg_buf = (char*)malloc(MAX_MSG_LEN);
+	
+	struct control_msghdr *cmh;
+	struct register_msgdata *rdata;
+	memset(msg_buf, 0, MAX_MSG_LEN);
+	
+	cmh = (struct control_msghdr*)msg_buf;
+	cmh->msg_type = REGISTER_REQUEST;
+	
+	rdata = (struct register_msgdata*)cmh->msgdata;
+	rdata->udp_port = htons(4000);
+	
+	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA);
+	
+	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name);
+	
+	int sent_length = send(tcp_socket_fd, msg_buf, cmh->msg_len, 0);
+	assert(sent_length == 0);
+	
+	free(msg_buf);
+	
 	/* 2. initialization to allow UDP-based chat messages to chat server */
 
 
