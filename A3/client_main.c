@@ -23,6 +23,8 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/select.h>
+#include <sys/time.h>
 
 /*************** GLOBAL VARIABLES ******************/
 
@@ -738,18 +740,42 @@ void handle_command_input(char *line)
 
 void get_user_input()
 {
+	// initialize data needed for a select call
+	fd_set readfds;
+	struct timeval timeout;
+	
 	char *buf = (char *)malloc(MAX_MSGDATA);
-	char *result_str;
+	//char *result_str;
 
 	while(TRUE) {
-
-		bzero(buf, MAX_MSGDATA);
-
 		printf("\n[%s]>  ",member_name);
-
-		result_str = fgets(buf,MAX_MSGDATA,stdin);
-
-		if (result_str == NULL) {
+		fflush(stdout);
+		
+		// get ready for a select
+		while(TRUE) {
+			FD_ZERO(&readfds);
+			FD_SET(0, &readfds);
+			timeout.tv_sec = 10;
+			timeout.tv_usec = 0;
+			int status = select(1, &readfds, NULL, NULL, &timeout);
+			if (status < 0) {
+				perror("select()");
+				shutdown_clean();
+			} else if (status > 0) {
+				// go and handle command
+				break;
+			} else {
+				// timeout
+				// TODO for now just keep trying
+			}
+		}
+		
+		// now we know there's data on stdin
+		bzero(buf, MAX_MSGDATA);
+		
+		ssize_t read_size = read(0, buf, MAX_MSGDATA-1);
+		// result_str = fgets(buf,MAX_MSGDATA,stdin);
+		if (read_size <= 0) {
 			printf("Error or EOF while reading user input.  Guess we're done.\n");
 			break;
 		}
