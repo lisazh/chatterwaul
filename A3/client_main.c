@@ -46,7 +46,7 @@ int udp_socket_fd;
 
 /* Needed for REGISTER_REQUEST */
 char member_name[MAX_MEMBER_NAME_LEN] = "";
-u_int16_t client_udp_port; 
+u_int16_t client_udp_port = 0; 
 
 /* Initialize with value returned in REGISTER_SUCC response */
 u_int16_t member_id = 0;
@@ -61,6 +61,8 @@ int ctrl2rcvr_qid;
  */
 #define MAX_MSGDATA (MAX_MSG_LEN - sizeof(struct chat_msghdr))
 
+// holds the last error message from a failed control message exchange
+char last_error_msg[MAX_MSGDATA+1] = "";
 
 /************* FUNCTION DEFINITIONS ***********/
 
@@ -253,10 +255,62 @@ int create_receiver()
  * on error.
  */
 
+// helper functions for command messages
+struct control_msghdr *new_control_msg() {
+	char *buf = malloc(MAX_MSG_LEN);
+	memset(buf, 0, MAX_MSG_LEN);
+	struct control_msghdr *cmh = (struct control_msghdr*)buf;
+	return cmh;
+}
+
+void free_control_msg(struct control_msghdr *ptr) {
+	free(ptr);
+}
+
+// Assume we have server_host_name,server_tcp_port,member_name
 int handle_register_req()
 {
-
-	return 0;
+	// send the message
+	struct control_msghdr *cmh = new_control_msg();
+	struct register_msgdata *rdata = (struct register_msgdata*)cmh->msgdata;
+	
+	cmh->msg_type = REGISTER_REQUEST;
+	rdata->udp_port = htons(4000); /* TODO client_udp_port Just hardcoding for now */
+	
+	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA);
+	
+	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name);
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	assert(sent_length == cmh->msg_len);
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	assert(received_length >= sizeof(struct control_msghdr));
+	
+	int ret = -1;
+	
+	switch(cmh->msg_type) {
+		case REGISTER_SUCC:
+			// get the member id
+			member_id = cmh->member_id;
+			ret = 0;
+			break;
+		case REGISTER_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = -1;
+			break;
+		default:
+			// unexpected control message
+			assert(FALSE);
+			ret = -1;
+			break;
+	}
+	
+	free_control_msg(cmh);
+	
+	return ret;
 }
 
 int handle_room_list_req()
@@ -298,15 +352,17 @@ int init_client()
 	 *
 	 * YOUR CODE HERE
 	 */
-	 
-	 
-
+	
+	int status;
+	struct addrinfo hints;
+	struct addrinfo *res;  // will point to the results
+	
 #ifdef USE_LOCN_SERVER
-
+	
 	/* 0. Get server host name, port numbers from location server.
 	 *    See retrieve_chatserver_info() in client_util.c
 	 */
-
+	
 #endif
 	
 	// as of here, we should have access to:
@@ -314,13 +370,9 @@ int init_client()
 	
 	/* 1. initialization to allow TCP-based control messages to chat server */
 	
-	int status;
-	struct addrinfo hints;
-	struct addrinfo *res;  // will point to the results
-
-	memset(&hints, 0, sizeof hints); // make sure the struct is empty
-	hints.ai_family = AF_INET;     // don't care IPv4 or IPv6
-	hints.ai_socktype = SOCK_STREAM; // TCP stream sockets
+	memset(&hints, 0, sizeof(hints)); // make sure the struct is empty
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
 	
 	// get a string representation of the port number
 	char server_tcp_port_str[20];
@@ -337,38 +389,43 @@ int init_client()
 	status = connect(tcp_socket_fd, res->ai_addr, res->ai_addrlen);
 	assert(status == 0);
 	
-	// send a test message
-	char *msg_buf = (char*)malloc(MAX_MSG_LEN);
-	
-	struct control_msghdr *cmh;
-	struct register_msgdata *rdata;
-	memset(msg_buf, 0, MAX_MSG_LEN);
-	
-	cmh = (struct control_msghdr*)msg_buf;
-	cmh->msg_type = REGISTER_REQUEST;
-	
-	rdata = (struct register_msgdata*)cmh->msgdata;
-	rdata->udp_port = htons(4000);
-	
-	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA);
-	
-	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name);
-	
-	int sent_length = send(tcp_socket_fd, msg_buf, cmh->msg_len, 0);
-	assert(sent_length == 0);
-	
-	free(msg_buf);
+	// done with the addrinfo
+	freeaddrinfo(res);
 	
 	/* 2. initialization to allow UDP-based chat messages to chat server */
-
-
+	memset(&hints, 0, sizeof(hints)); // make sure the struct is empty
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_DGRAM;
+	
+	// get a string representation of the port number
+	char server_udp_port_str[20];
+	sprintf(server_udp_port_str, "%d", server_udp_port);
+	
+	status = getaddrinfo(server_host_name, server_udp_port_str, &hints, &res);
+	assert(status == 0);
+	
+	// make a udp socket
+	udp_socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	assert(udp_socket_fd >= 0);
+	
+	// connect to the server (so we can use send with udp socket)
+	status = connect(udp_socket_fd, res->ai_addr, res->ai_addrlen);
+	assert(status == 0);
+	
+	// done with the addrinfo
+	freeaddrinfo(res);
+	
 	/* 3. spawn receiver process - see create_receiver() in this file. */
-
-
+	
+	
 	/* 4. register with chat server */
-    
-
-
+	
+	status = handle_register_req();
+	if (status != 0) {
+		printf("Error encountered: %s\n", last_error_msg);
+		assert(status == 0);
+	}
+	
 	return 0;
 
 }
@@ -491,6 +548,7 @@ void handle_command_input(char *line)
 	/* Currently, we ignore the result of command handling.
 	 * You may want to change that.
 	 */
+	(void)result; /* TODO */
 
 	return;
 }
