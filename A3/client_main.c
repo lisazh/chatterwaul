@@ -38,6 +38,7 @@ char server_host_name[MAX_HOST_NAME_LEN] = "";
 u_int16_t server_tcp_port = 0;
 struct sockaddr_in server_tcp_addr;
 int tcp_socket_fd = -1;
+struct addrinfo* tcp_addrinfo = NULL;
 
 /* For chat messages */
 u_int16_t server_udp_port = 0;
@@ -256,22 +257,31 @@ int create_receiver()
  */
 
 // helper functions for command messages
-struct control_msghdr *new_control_msg() {
+struct control_msghdr *prepare_handle() {
+	// make a tcp socket
+	tcp_socket_fd = socket(tcp_addrinfo->ai_family, tcp_addrinfo->ai_socktype, tcp_addrinfo->ai_protocol);
+	assert(tcp_socket_fd >= 0);
+	
+	// connect to the server
+	int status = connect(tcp_socket_fd, tcp_addrinfo->ai_addr, tcp_addrinfo->ai_addrlen);
+	assert(status == 0);
+	
 	char *buf = malloc(MAX_MSG_LEN);
 	memset(buf, 0, MAX_MSG_LEN);
 	struct control_msghdr *cmh = (struct control_msghdr*)buf;
 	return cmh;
 }
 
-void free_control_msg(struct control_msghdr *ptr) {
+void finish_handle(struct control_msghdr *ptr) {
 	free(ptr);
+	close(tcp_socket_fd);
 }
 
 // Assume we have server_host_name,server_tcp_port,member_name
 int handle_register_req()
 {
 	// send the message
-	struct control_msghdr *cmh = new_control_msg();
+	struct control_msghdr *cmh = prepare_handle();
 	struct register_msgdata *rdata = (struct register_msgdata*)cmh->msgdata;
 	
 	cmh->msg_type = REGISTER_REQUEST;
@@ -308,15 +318,50 @@ int handle_register_req()
 			break;
 	}
 	
-	free_control_msg(cmh);
+	finish_handle(cmh);
 	
 	return ret;
 }
 
 int handle_room_list_req()
 {
-
-	return 0;
+	// send the message
+	struct control_msghdr *cmh = prepare_handle();
+	
+	cmh->msg_type = ROOM_LIST_REQUEST;
+	cmh->member_id = member_id;
+	cmh->msg_len = sizeof(struct control_msghdr);
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	assert(sent_length == cmh->msg_len);
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	assert(received_length >= sizeof(struct control_msghdr));
+	
+	int ret = -1;
+	
+	switch(cmh->msg_type) {
+		case ROOM_LIST_SUCC:
+			// print out the rooms
+			printf("%s\n", (char*)cmh->msgdata);
+			ret = 0;
+			break;
+		case ROOM_LIST_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = -1;
+			break;
+		default:
+			// unexpected control message
+			assert(FALSE);
+			ret = -1;
+			break;
+	}
+	
+	finish_handle(cmh);
+	
+	return ret;
 }
 
 int handle_member_list_req(char *room_name)
@@ -340,7 +385,23 @@ int handle_create_room_req(char *room_name)
 
 int handle_quit_req()
 {
-
+	// send the message
+	struct control_msghdr *cmh = prepare_handle();
+	
+	cmh->msg_type = QUIT_REQUEST;
+	
+	cmh->msg_len = sizeof(struct control_msghdr);
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	assert(sent_length == cmh->msg_len);
+	
+	// no response necessary
+	
+	finish_handle(cmh);
+	
+	// now we shutdown
+	shutdown_clean();
+	
 	return 0;
 }
 
@@ -381,16 +442,8 @@ int init_client()
 	status = getaddrinfo(server_host_name, server_tcp_port_str, &hints, &res);
 	assert(status == 0);
 	
-	// make a tcp socket
-	tcp_socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-	assert(tcp_socket_fd >= 0);
-	
-	// connect to the server
-	status = connect(tcp_socket_fd, res->ai_addr, res->ai_addrlen);
-	assert(status == 0);
-	
-	// done with the addrinfo
-	freeaddrinfo(res);
+	// keep it around because we need to connect for every control message
+	tcp_addrinfo = res;
 	
 	/* 2. initialization to allow UDP-based chat messages to chat server */
 	memset(&hints, 0, sizeof(hints)); // make sure the struct is empty
@@ -423,8 +476,8 @@ int init_client()
 	status = handle_register_req();
 	if (status != 0) {
 		printf("Error encountered: %s\n", last_error_msg);
-		assert(status == 0);
 	}
+	assert(status == 0);
 	
 	return 0;
 
@@ -557,7 +610,11 @@ void handle_command_input(char *line)
 	/* Currently, we ignore the result of command handling.
 	 * You may want to change that.
 	 */
-	(void)result; /* TODO */
+	if (result != 0) {
+		printf("Error encountered: %s\n", last_error_msg);
+	}
+	assert(result == 0);
+	
 
 	return;
 }
