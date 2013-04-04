@@ -770,7 +770,7 @@ void get_user_input()
 			}
 		}
 		
-		// now we know there's data on stdin
+		// now we know we can read from stdin without blocking
 		bzero(buf, MAX_MSGDATA);
 		
 		ssize_t read_size = read(0, buf, MAX_MSGDATA-1);
@@ -789,14 +789,11 @@ void get_user_input()
 				buf[len-1] = '\0';
 			}
 			handle_command_input(&buf[1]);
-      
 		} else {
 			handle_chatmsg_input(buf);
 		}
 	}
-
 	free(buf);
-  
 }
 
 
