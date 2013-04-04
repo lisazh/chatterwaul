@@ -279,7 +279,7 @@ int handle_register_req()
 	
 	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA);
 	
-	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name);
+	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name)+1;
 	
 	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
 	assert(sent_length == cmh->msg_len);
@@ -446,13 +446,22 @@ void handle_chatmsg_input(char *inputdata)
 		shutdown_clean();
 		exit(1);
 	}
-
+	
 	bzero(buf, MAX_MSG_LEN);
-
-
+	
+	
 	/**** YOUR CODE HERE ****/
-
-
+	// assume inputdata is restricted in size and null-terminated
+	
+	// assemble the chat message
+	struct chat_msghdr *chmh = (struct chat_msghdr*)buf;
+	chmh->sender.member_id = member_id;
+	strncpy((char*)chmh->msgdata, inputdata, MAX_MSGDATA);
+	chmh->msg_len = sizeof(struct chat_msghdr) + strlen(inputdata) + 1;
+	
+	int sent_length = send(udp_socket_fd, chmh, chmh->msg_len, 0);
+	assert(sent_length == chmh->msg_len);
+	
 	free(buf);
 	return;
 }
