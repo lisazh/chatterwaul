@@ -509,6 +509,7 @@ int handle_quit_req()
 	struct control_msghdr *cmh = prepare_handle();
 	
 	cmh->msg_type = QUIT_REQUEST;
+	cmh->member_id = member_id;
 	
 	cmh->msg_len = sizeof(struct control_msghdr);
 	
@@ -629,13 +630,14 @@ void handle_chatmsg_input(char *inputdata)
 	// assemble the chat message
 	struct chat_msghdr *chmh = (struct chat_msghdr*)buf;
 	chmh->sender.member_id = member_id;
-	strncpy((char*)chmh->msgdata, inputdata, MAX_MSGDATA);
-	chmh->msg_len = sizeof(struct chat_msghdr) + strlen(inputdata) + 1;
+	strncpy((char*)chmh->msgdata, inputdata, MAX_MSGDATA-1);
+	chmh->msg_len = sizeof(struct chat_msghdr) + strlen(inputdata)+1;
 	
 	int sent_length = send(udp_socket_fd, chmh, chmh->msg_len, 0);
 	assert(sent_length == chmh->msg_len);
 	
 	free(buf);
+	
 	return;
 }
 
