@@ -45,7 +45,7 @@ struct addrinfo* tcp_addrinfo = NULL;
 /* For chat messages */
 u_int16_t server_udp_port = 0;
 struct sockaddr_in server_udp_addr;
-int udp_socket_fd;
+int udp_socket_fd = -1;
 
 /* Needed for REGISTER_REQUEST */
 char member_name[MAX_MEMBER_NAME_LEN] = "";
@@ -274,13 +274,13 @@ struct control_msghdr *prepare_handle() {
 	
 	char *buf = malloc(MAX_MSG_LEN);
 	memset(buf, 0, MAX_MSG_LEN);
-	struct control_msghdr *cmh = (struct control_msghdr*)buf;
-	return cmh;
+	return (struct control_msghdr*)buf;
 }
 
 void finish_handle(struct control_msghdr *ptr) {
 	free(ptr);
 	close(tcp_socket_fd);
+	tcp_socket_fd = -1;
 }
 
 // Assume we have server_host_name,server_tcp_port,member_name
@@ -293,7 +293,7 @@ int handle_register_req()
 	cmh->msg_type = REGISTER_REQUEST;
 	rdata->udp_port = htons(4000); /* TODO client_udp_port Just hardcoding for now */
 	
-	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA);
+	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA-1);
 	
 	cmh->msg_len = sizeof(struct control_msghdr) + sizeof(struct register_msgdata) + strlen(member_name)+1;
 	
@@ -378,7 +378,7 @@ int handle_member_list_req(char *room_name)
 	cmh->msg_type = MEMBER_LIST_REQUEST;
 	cmh->member_id = member_id;
 	
-	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA);
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
 	
 	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
 	
@@ -422,7 +422,7 @@ int handle_switch_room_req(char *room_name)
 	cmh->msg_type = SWITCH_ROOM_REQUEST;
 	cmh->member_id = member_id;
 	
-	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA);
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
 	
 	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
 	
@@ -466,7 +466,7 @@ int handle_create_room_req(char *room_name)
 	cmh->msg_type = CREATE_ROOM_REQUEST;
 	cmh->member_id = member_id;
 	
-	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA);
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
 	
 	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
 	
@@ -526,14 +526,11 @@ int handle_quit_req()
 	return 0;
 }
 
-
-int init_client()
-{
-	/* Initialize client so that it is ready to start exchanging messages
-	 * with the chat server.
-	 *
-	 * YOUR CODE HERE
-	 */
+// this finds the tcp and udp ports and sets it up
+// assume member_name is set
+// this can be called many times if it fails
+// returns 0 on success, -1 on error
+int find_server() {
 	
 	int status;
 	struct addrinfo hints;
@@ -561,9 +558,15 @@ int init_client()
 	sprintf(server_tcp_port_str, "%d", server_tcp_port);
 	
 	status = getaddrinfo(server_host_name, server_tcp_port_str, &hints, &res);
-	assert(status == 0);
+	if (status != 0) {
+		return -1;
+	}
 	
 	// keep it around because we need to connect for every control message
+	// free up the old one if necessary
+	if (tcp_addrinfo != NULL) {
+		freeaddrinfo(tcp_addrinfo);
+	}
 	tcp_addrinfo = res;
 	
 	/* 2. initialization to allow UDP-based chat messages to chat server */
@@ -576,18 +579,48 @@ int init_client()
 	sprintf(server_udp_port_str, "%d", server_udp_port);
 	
 	status = getaddrinfo(server_host_name, server_udp_port_str, &hints, &res);
-	assert(status == 0);
+	if (status != 0) {
+		return -1;
+	}
 	
 	// make a udp socket
+	// clean up an old one if necessary
+	if (udp_socket_fd >= 0) {
+		close(udp_socket_fd);
+	}
 	udp_socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-	assert(udp_socket_fd >= 0);
+	if (udp_socket_fd < 0) {
+		return -1;
+	}
 	
 	// connect to the server (so we can use send with udp socket)
 	status = connect(udp_socket_fd, res->ai_addr, res->ai_addrlen);
-	assert(status == 0);
+	if (status != 0) {
+		return -1;
+	}
 	
 	// done with the addrinfo
 	freeaddrinfo(res);
+	
+	// success!
+	return 0;
+}
+
+int init_client()
+{
+	/* Initialize client so that it is ready to start exchanging messages
+	 * with the chat server.
+	 *
+	 * YOUR CODE HERE
+	 */
+	
+	// as of here, we should have access to:
+	// server_host_name,server_tcp_port,server_udp_port,member_name
+	
+	/* 1. initialization to allow TCP-based control messages to chat server */
+	/* 2. initialization to allow UDP-based chat messages to chat server */
+	int status = find_server();
+	assert(status == 0);
 	
 	/* 3. spawn receiver process - see create_receiver() in this file. */
 	
