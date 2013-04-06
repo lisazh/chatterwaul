@@ -112,7 +112,7 @@ void init_receiver()
 	 *    Use the send_error and send_ok functions
 	 */
 	
-	if (bind(sockfd, (struct sockaddr *)&servaddr, slen < 0)){
+	if (bind(sockfd, (struct sockaddr *)&servaddr, slen) < 0){
 		send_error(ctrl2rcvr_qid, BIND_FAILED);
 		exit(1);
 	}
@@ -145,6 +145,7 @@ void handle_received_msg(char *buf)
 	//null terminate for safety
 	msgbd[recvd->msg_len] = '\0';
 	printf("%s\n", msgbd);
+	fflush(stdout);
 }
 
 
@@ -173,38 +174,40 @@ void receive_msgs()
 	msg_t msg;
 	
 	//for the select()
-	fd_set readset;
+	fd_set readset, readset_orig;
 	struct timeval wtime;
-
-	//set how long to wait for server messages
-	wtime.tv_sec = 20; 
-	wtime.tv_usec = 0;
 
 	//set up readset and add the socket descriptor to it
 	FD_ZERO(&readset);
 	FD_SET(sockfd, &readset);
+	readset_orig = readset;
 
 	while(TRUE) {
 
 		/**** YOUR CODE HERE ****/
-	  //check if server has sent a message over
-	  	if (select(sockfd + 1, &readset, NULL, NULL, &wtime)< 0){
+		//check if server has sent a message over
+		//set how long to wait for server messages
+		wtime.tv_sec = 5; 
+		wtime.tv_usec = 0;
+		readset = readset_orig;
+		if (select(sockfd + 1, &readset, NULL, NULL, &wtime)< 0){
 			perror("select");
 			free(buf);
 			exit(1);
 		}
 
-	  	if(FD_ISSET(sockfd, &readset)){
-	  		recv(sockfd, buf, sizeof(buf), 0);
+		if(FD_ISSET(sockfd, &readset)){
+			memset(buf, 0, MAX_MSG_LEN);
+			recv(sockfd, buf, MAX_MSG_LEN, 0);
 			handle_received_msg(buf);
 
-	  	}
+		}
 		
 
-	  	//select timed out, so check for messages from control message queue
-	  	//msgflag is 1 to ensure no waiting? (check if correct)
-	 	msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAIT);
-	  	if (msg.body.status == CHAT_QUIT){
+		//select timed out, so check for messages from control message queue
+		//msgflag is 1 to ensure no waiting? (check if correct)
+		msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAIT);
+		if (msg.body.status == CHAT_QUIT){
 			// quit n stuff
 			if (close(sockfd) < 0){
 				perror("close"); //ALTERNATIVELY: send_error to control???

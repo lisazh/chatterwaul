@@ -235,7 +235,7 @@ int create_receiver()
 			numtries++;
 		} else if (result > 0) {
 			if (msg.body.status == RECV_READY) {
-				printf("Start of receiver successful, port %u\n",msg.body.value);
+				printf("Start of receiver successful, port %u\n",ntohs(msg.body.value));
 				client_udp_port = msg.body.value;
 			} else {
 				printf("start of receiver failed with code %u\n",msg.body.value);
