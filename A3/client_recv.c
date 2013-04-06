@@ -24,6 +24,9 @@ static char *option_string = "f:";
 int ctrl2rcvr_qid;
 char ctrl2rcvr_fname[MAX_FILE_NAME_LEN];
 
+/* For receiving message from the server */
+int sockfd;
+
 
 void usage(char **argv) {
 	printf("usage:\n");
@@ -42,7 +45,7 @@ void open_client_channel(int *qid) {
 		fprintf(stderr,"for message channel ./msg_channel\n");
 
 		/* No way to tell parent about our troubles, unless/until it 
-		 * wait's for us.  Quit now.
+		 * waits for us.  Quit now.
 		 */
 		exit(1);
 	}
@@ -92,9 +95,33 @@ void init_receiver()
 
 	/* 2. Initialize UDP socket for receiving chat messages. */
 
+	struct sockaddr_in servaddr;
+	socklen_t slen = sizeof(servaddr); 
+	//assuming we don't have a specific protocol in mind?
+	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	
+	bzero(&servaddr, sizeof(servaddr));
+	servaddr.sin_family = AF_INET;
+	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servaddr.sin_port = 0;
+	
 	/* 3. Tell parent the port number if successful, or failure code if not. 
 	 *    Use the send_error and send_ok functions
 	 */
+	
+	if (bind(sockfd, (struct sockaddr *)&servaddr, slen < 0)){
+		send_error(ctrl2rcvr_qid, whateverthecodeis);
+		exit(1);
+	}
+	 
+	if (getsockname(sockfd, (struct sockaddr *)&servaddr, &slen) < 0){
+
+	  send_error(ctrl2rcvr_qid, whateverthecodeis);
+	  exit(1);
+
+	}
+
+	send_ok(ctrl2rcvr_qid, servaddr.sin_port);
 
 }
 
@@ -107,6 +134,9 @@ void handle_received_msg(char *buf)
 {
 
 	/**** YOUR CODE HERE ****/
+  //just got message from server
+  recv(sockfd, buf, sizeof(buf), 0);
+  
 
 }
 
@@ -131,12 +161,48 @@ void receive_msgs()
 		exit(1);
 	}
 
-
 	/**** YOUR CODE HERE ****/
+	//for the message queue BUT MAY JUST USE BUF INSTEAD DECIDE LATER
+	struct msgbuf interbuf;
+	
+	//for the select()
+	fd_set readset;
+	struct timeval wtime;
+
+	//set how long to wait for server messages
+	wtime.tv_sec = 15; 
+	wtime.tv_usec = 0;
+
+	//set up readset and add the socket descriptor to it
+	FD_ZERO(&readset);
+	FD_SET(sockfd, &readset);
 
 	while(TRUE) {
 
 		/**** YOUR CODE HERE ****/
+	  //check if server has sent a message over
+	  if (select(n, &readset, NULL, NULL, &wtime)< 0){
+		perror("select");
+		free(buf);
+		exit(1);
+
+	  if(FD_ISSET(sockfd, &readset)){
+		handle_received_msg(buf);
+
+	  }
+	  
+
+	  //select timed out, so check for messages from control message queue
+	  //msgflag is 1 to ensure no waiting? (check if correct)
+	  msgrcv(ctrl2rcvr_qid, &interbuf, sizeof(struct msgbuf), 0, 1);
+	  //only message we expect to receive from control is quitting, so deal with:
+	  if (msg.body.status == CHAT_QUIT){
+		// quit n stuff
+
+	  }
+
+
+
 
 	}
 
