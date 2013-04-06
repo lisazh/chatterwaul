@@ -24,7 +24,7 @@ static char *option_string = "f:";
 int ctrl2rcvr_qid;
 char ctrl2rcvr_fname[MAX_FILE_NAME_LEN];
 
-/* For receiving message from the server */
+/* For receiving messages from the server */
 int sockfd;
 
 
@@ -98,7 +98,10 @@ void init_receiver()
 	struct sockaddr_in servaddr;
 	socklen_t slen = sizeof(servaddr); 
 	//assuming we don't have a specific protocol in mind?
-	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sockfd = socket(AF_INET, SOCK_DGRAM, 0) < 0){
+		send_error(ctrl2rcvr_qid, SOCKET_FAILED);
+		exit(1);
+	}
 	
 	bzero(&servaddr, sizeof(servaddr));
 	servaddr.sin_family = AF_INET;
@@ -110,13 +113,13 @@ void init_receiver()
 	 */
 	
 	if (bind(sockfd, (struct sockaddr *)&servaddr, slen < 0)){
-		send_error(ctrl2rcvr_qid, whateverthecodeis);
+		send_error(ctrl2rcvr_qid, BIND_FAILED);
 		exit(1);
 	}
 	 
 	if (getsockname(sockfd, (struct sockaddr *)&servaddr, &slen) < 0){
 
-	  send_error(ctrl2rcvr_qid, whateverthecodeis);
+	  send_error(ctrl2rcvr_qid, NAME_FAILED);
 	  exit(1);
 
 	}
@@ -134,10 +137,14 @@ void handle_received_msg(char *buf)
 {
 
 	/**** YOUR CODE HERE ****/
-  //just got message from server
-  recv(sockfd, buf, sizeof(buf), 0);
-  
-
+  	//process message from server and output to user
+	struct chat_msghdr *recvd = (struct chat_msghdr*)buf;
+	printf("%s:\n", recvd.sender.member_name);
+	char msgbd[recvd.msg_len+ 1];
+	stncpy(msgbd, (char *)recvd.msgdata, recvd.msg_len + 1);
+	//null terminate for safety
+	msgbd[recvd.msg_len] = '\0'
+	printf("%s\n", msgbd);
 }
 
 
@@ -162,15 +169,15 @@ void receive_msgs()
 	}
 
 	/**** YOUR CODE HERE ****/
-	//for the message queue BUT MAY JUST USE BUF INSTEAD DECIDE LATER
-	struct msgbuf interbuf;
+	//for the message queue
+	msg_t msg;
 	
 	//for the select()
 	fd_set readset;
 	struct timeval wtime;
 
 	//set how long to wait for server messages
-	wtime.tv_sec = 15; 
+	wtime.tv_sec = 20; 
 	wtime.tv_usec = 0;
 
 	//set up readset and add the socket descriptor to it
@@ -181,28 +188,32 @@ void receive_msgs()
 
 		/**** YOUR CODE HERE ****/
 	  //check if server has sent a message over
-	  if (select(n, &readset, NULL, NULL, &wtime)< 0){
-		perror("select");
-		free(buf);
-		exit(1);
+	  	if (select(n, &readset, NULL, NULL, &wtime)< 0){
+			perror("select");
+			free(buf);
+			exit(1);
+		}
 
-	  if(FD_ISSET(sockfd, &readset)){
-		handle_received_msg(buf);
+	  	if(FD_ISSET(sockfd, &readset)){
+	  		recv(sockfd, buf, sizeof(buf), 0);
+			handle_received_msg(buf);
 
-	  }
-	  
+	  	}
+		
 
-	  //select timed out, so check for messages from control message queue
-	  //msgflag is 1 to ensure no waiting? (check if correct)
-	  msgrcv(ctrl2rcvr_qid, &interbuf, sizeof(struct msgbuf), 0, 1);
-	  //only message we expect to receive from control is quitting, so deal with:
-	  if (msg.body.status == CHAT_QUIT){
-		// quit n stuff
+	  	//select timed out, so check for messages from control message queue
+	  	//msgflag is 1 to ensure no waiting? (check if correct)
+	 	msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAITbu);
+	  	if (msg.body.status == CHAT_QUIT){
+			// quit n stuff
+			if (close(sockfd) < 0){
+				perror("close"); //ALTERNATIVELY: send_error to control???
+				exit(1);
+			}
 
-	  }
+			break;
 
-
-
+	  	}
 
 	}
 
