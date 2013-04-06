@@ -158,7 +158,7 @@ int retrieve_chatserver_info(char *chatserver_name, u_int16_t *tcp_port, u_int16
 		int eol = find_nn(buf, MAX_MSG_LEN);
 		assert(eol >= 0);
 		
-		printf("HTTP error %d", code);
+		printf("HTTP %d", code);
 		int i;
 		for (i = n; i < eol; ++i) {
 			putchar(buf[i]);
