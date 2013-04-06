@@ -16,7 +16,7 @@ VERSION=1
 ###########################################################################
 
 CC = gcc
-CFLAGS = -Wall -g #-DUSE_LOCN_SERVER
+CFLAGS = -Wall -g -DUSE_LOCN_SERVER
 SERVER_BIN = chatserver 
 SERVER_OBJS = server_util.o server_main.o
 

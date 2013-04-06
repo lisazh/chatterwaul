@@ -817,7 +817,11 @@ int init_client()
 	/* 1. initialization to allow TCP-based control messages to chat server */
 	/* 2. initialization to allow UDP-based chat messages to chat server */
 	int status = find_server();
-	assert(status == 0);
+	if (status != 0) {
+		// just quit and have the user try again
+		printf("ERROR: cannot find server\n");
+		exit(1);
+	}
 	
 	/* 3. spawn receiver process - see create_receiver() in this file. */
 	
@@ -861,7 +865,8 @@ void handle_chatmsg_input(char *inputdata)
 	chmh->msg_len = sizeof(struct chat_msghdr) + strlen(inputdata)+1;
 	
 	int sent_length = send(udp_socket_fd, chmh, chmh->msg_len, 0);
-	assert(sent_length == chmh->msg_len);
+	// even though this is udp, check anyway
+	check(sent_length == chmh->msg_len);
 	
 	free(buf);
 	
