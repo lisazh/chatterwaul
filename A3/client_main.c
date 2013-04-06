@@ -15,6 +15,7 @@
 #include <string.h>
 #include <assert.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <netinet/in.h>
 #include <netdb.h>
@@ -38,13 +39,11 @@ char server_host_name[MAX_HOST_NAME_LEN] = "";
 
 /* For control messages */
 u_int16_t server_tcp_port = 0;
-struct sockaddr_in server_tcp_addr;
 int tcp_socket_fd = -1;
 struct addrinfo* tcp_addrinfo = NULL;
 
 /* For chat messages */
 u_int16_t server_udp_port = 0;
-struct sockaddr_in server_udp_addr;
 int udp_socket_fd = -1;
 
 /* Needed for REGISTER_REQUEST */
@@ -119,8 +118,6 @@ void shutdown_clean() {
 	exit(0);
 }
 
-
-
 int initialize_client_only_channel(int *qid)
 {
 	/* Create IPC message queue for communication with receiver process */
@@ -174,8 +171,6 @@ int initialize_client_only_channel(int *qid)
 
 	return 0;
 }
-
-
 
 int create_receiver()
 {
@@ -278,9 +273,14 @@ struct control_msghdr *prepare_handle() {
 }
 
 void finish_handle(struct control_msghdr *ptr) {
-	free(ptr);
-	close(tcp_socket_fd);
-	tcp_socket_fd = -1;
+	// finish the exchange and close the connection
+	if (ptr != NULL) {
+		free(ptr);
+	}
+	if (tcp_socket_fd >= 0) {
+		close(tcp_socket_fd);
+		tcp_socket_fd = -1;
+	}
 }
 
 // Assume we have server_host_name,server_tcp_port,member_name
@@ -502,6 +502,24 @@ int handle_create_room_req(char *room_name)
 	return ret;
 }
 
+int handle_member_keep_alive() {
+	// send the message
+	struct control_msghdr *cmh = prepare_handle();
+	
+	cmh->msg_type = MEMBER_KEEP_ALIVE;
+	cmh->member_id = member_id;
+	
+	cmh->msg_len = sizeof(struct control_msghdr);
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	assert(sent_length == cmh->msg_len);
+	
+	// no response necessary
+	
+	finish_handle(cmh);
+	
+	return 0;
+}
 
 int handle_quit_req()
 {
@@ -541,6 +559,11 @@ int find_server() {
 	/* 0. Get server host name, port numbers from location server.
 	 *    See retrieve_chatserver_info() in client_util.c
 	 */
+	
+	status = retrieve_chatserver_info(server_host_name, &server_tcp_port, &server_udp_port);
+	if (status != 0) {
+		return -1;
+	}
 	
 #endif
 	
@@ -588,14 +611,18 @@ int find_server() {
 	if (udp_socket_fd >= 0) {
 		close(udp_socket_fd);
 	}
+	
 	udp_socket_fd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 	if (udp_socket_fd < 0) {
+		freeaddrinfo(res);
 		return -1;
 	}
 	
 	// connect to the server (so we can use send with udp socket)
 	status = connect(udp_socket_fd, res->ai_addr, res->ai_addrlen);
 	if (status != 0) {
+		freeaddrinfo(res);
+		close(udp_socket_fd);
 		return -1;
 	}
 	
@@ -603,6 +630,48 @@ int find_server() {
 	freeaddrinfo(res);
 	
 	// success!
+	return 0;
+}
+
+// try several times to reconnect to the server and register
+// 0 on success, -1 on failure
+int try_reconnect() {
+	int retries = 5;
+	// delay in seconds between retries
+	int delay = 5;
+	
+	printf("Server connection lost\n");
+	fflush(stdout);
+	
+	int status;
+	int i;
+	
+	int connected = FALSE;
+	
+	for (i = 0; i < retries; ++i) {
+		printf("Attempting to reconnect to the server (try %d of %d)\n", i, retries);
+		fflush(stdout);
+		status = find_server();
+		if (status == 0) {
+			connected = TRUE;
+			break;
+		}
+		sleep(delay);
+	}
+	
+	if (!connected) {
+		printf("Error encountered: cannot connect to server\n");
+		fflush(stdout);
+		return -1;
+	}
+	
+	// re-register
+	status = handle_register_req();
+	if (status != 0) {
+		printf("Error encountered: %s\n", last_error_msg);
+		fflush(stdout);
+		return -1;
+	}
 	return 0;
 }
 
@@ -775,9 +844,14 @@ void handle_command_input(char *line)
 
 void get_user_input()
 {
+	// how many seconds elapse between member keep alives
+	int timeout = 5;
+	
 	// initialize data needed for a select call
 	fd_set readfds;
-	struct timeval timeout;
+	struct timeval waittime;
+	
+	int status;
 	
 	char *buf = (char *)malloc(MAX_MSGDATA);
 	//char *result_str;
@@ -787,21 +861,38 @@ void get_user_input()
 		fflush(stdout);
 		
 		// get ready for a select
+		waittime.tv_sec = timeout;
+		waittime.tv_usec = 0;
+		
 		while(TRUE) {
 			FD_ZERO(&readfds);
 			FD_SET(0, &readfds);
-			timeout.tv_sec = 10;
-			timeout.tv_usec = 0;
-			int status = select(1, &readfds, NULL, NULL, &timeout);
+			
+			status = select(1, &readfds, NULL, NULL, &waittime);
+			if (waittime.tv_sec == 0 && waittime.tv_usec == 0) {
+				// reset once we've waited long enough
+				waittime.tv_sec = timeout;
+				waittime.tv_usec = 0;
+			}
+			
+			// handle stuff
 			if (status < 0) {
 				perror("select()");
 				shutdown_clean();
-			} else if (status > 0) {
-				// go and handle command
+			}
+			
+			// need to send member keep alive
+			if (status == 0 || (status > 0 && waittime.tv_sec == timeout)) {
+				status = handle_member_keep_alive();
+				assert(status == 0);
+				
+				printf("member keep alive\n");
+				fflush(stdout);
+			}
+			
+			if (status > 0) {
+				// need to go handle the command
 				break;
-			} else {
-				// timeout
-				// TODO for now just keep trying
 			}
 		}
 		
