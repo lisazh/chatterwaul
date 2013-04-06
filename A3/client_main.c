@@ -662,6 +662,7 @@ int try_reconnect() {
 	if (!connected) {
 		printf("Error encountered: cannot connect to server\n");
 		fflush(stdout);
+		shutdown_clean();
 		return -1;
 	}
 	
@@ -670,6 +671,7 @@ int try_reconnect() {
 	if (status != 0) {
 		printf("Error encountered: %s\n", last_error_msg);
 		fflush(stdout);
+		shutdown_clean();
 		return -1;
 	}
 	return 0;
@@ -849,31 +851,28 @@ void get_user_input()
 	
 	// initialize data needed for a select call
 	fd_set readfds;
-	struct timeval waittime;
+	struct timespec waittime;
+	waittime.tv_sec = timeout;
+	waittime.tv_nsec = 0;
+	time_t start = time(NULL);
 	
 	int status;
 	
 	char *buf = (char *)malloc(MAX_MSGDATA);
 	//char *result_str;
-
+	
 	while(TRUE) {
 		printf("\n[%s]>  ",member_name);
 		fflush(stdout);
 		
 		// get ready for a select
-		waittime.tv_sec = timeout;
-		waittime.tv_usec = 0;
 		
 		while(TRUE) {
 			FD_ZERO(&readfds);
 			FD_SET(0, &readfds);
 			
-			status = select(1, &readfds, NULL, NULL, &waittime);
-			if (waittime.tv_sec == 0 && waittime.tv_usec == 0) {
-				// reset once we've waited long enough
-				waittime.tv_sec = timeout;
-				waittime.tv_usec = 0;
-			}
+			// pselect doesn't modify waittime
+			status = pselect(1, &readfds, NULL, NULL, &waittime, NULL);
 			
 			// handle stuff
 			if (status < 0) {
@@ -882,13 +881,19 @@ void get_user_input()
 			}
 			
 			// need to send member keep alive
-			if (status == 0 || (status > 0 && waittime.tv_sec == timeout)) {
+			time_t elapsed = time(NULL) - start;
+			if (status == 0 || elapsed >= timeout) {
+				start = time(NULL);
+				elapsed = 0;
+				
 				status = handle_member_keep_alive();
 				assert(status == 0);
-				
-				printf("member keep alive\n");
-				fflush(stdout);
+			} else {
+				assert(elapsed >= 0 && elapsed < timeout);
 			}
+			// keep waiting for however many seconds are leftover
+			waittime.tv_sec = timeout - elapsed;
+			waittime.tv_nsec = 0;
 			
 			if (status > 0) {
 				// need to go handle the command
