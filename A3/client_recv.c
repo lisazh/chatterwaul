@@ -98,7 +98,7 @@ void init_receiver()
 	struct sockaddr_in servaddr;
 	socklen_t slen = sizeof(servaddr); 
 	//assuming we don't have a specific protocol in mind?
-	if (sockfd = socket(AF_INET, SOCK_DGRAM, 0) < 0){
+	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
 		send_error(ctrl2rcvr_qid, SOCKET_FAILED);
 		exit(1);
 	}

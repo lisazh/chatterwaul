@@ -464,10 +464,11 @@ int handle_register_req()
 		return -1;
 	}
 	
+	// package message to send to server
 	struct register_msgdata *rdata = (struct register_msgdata*)cmh->msgdata;
 	
 	cmh->msg_type = REGISTER_REQUEST;
-	rdata->udp_port = htons(4000); /* TODO client_udp_port Just hardcoding for now */
+	rdata->udp_port = client_udp_port; 
 	
 	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA-1);
 	
@@ -820,6 +821,7 @@ int init_client()
 	
 	/* 3. spawn receiver process - see create_receiver() in this file. */
 	
+	create_receiver();
 	
 	/* 4. register with chat server */
 	
