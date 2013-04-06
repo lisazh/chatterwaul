@@ -139,11 +139,11 @@ void handle_received_msg(char *buf)
 	/**** YOUR CODE HERE ****/
   	//process message from server and output to user
 	struct chat_msghdr *recvd = (struct chat_msghdr*)buf;
-	printf("%s:\n", recvd.sender.member_name);
-	char msgbd[recvd.msg_len+ 1];
-	stncpy(msgbd, (char *)recvd.msgdata, recvd.msg_len + 1);
+	printf("%s:\n", recvd->sender.member_name);
+	char msgbd[recvd->msg_len+ 1];
+	strncpy(msgbd, (char *)recvd->msgdata, recvd->msg_len + 1);
 	//null terminate for safety
-	msgbd[recvd.msg_len] = '\0'
+	msgbd[recvd->msg_len] = '\0';
 	printf("%s\n", msgbd);
 }
 
@@ -188,7 +188,7 @@ void receive_msgs()
 
 		/**** YOUR CODE HERE ****/
 	  //check if server has sent a message over
-	  	if (select(n, &readset, NULL, NULL, &wtime)< 0){
+	  	if (select(sockfd + 1, &readset, NULL, NULL, &wtime)< 0){
 			perror("select");
 			free(buf);
 			exit(1);
@@ -203,7 +203,7 @@ void receive_msgs()
 
 	  	//select timed out, so check for messages from control message queue
 	  	//msgflag is 1 to ensure no waiting? (check if correct)
-	 	msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAITbu);
+	 	msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAIT);
 	  	if (msg.body.status == CHAT_QUIT){
 			// quit n stuff
 			if (close(sockfd) < 0){
