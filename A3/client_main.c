@@ -53,6 +53,10 @@ u_int16_t client_udp_port = 0;
 /* Initialize with value returned in REGISTER_SUCC response */
 u_int16_t member_id = 0;
 
+// Keep track of what room we're in
+char room[MAX_ROOM_NAME_LEN+1];
+int inside_room = FALSE; /* whether we are in a room or not */
+
 /* For communication with receiver process */
 pid_t receiver_pid = -1;
 char ctrl2rcvr_fname[MAX_FILE_NAME_LEN] = "";
@@ -265,6 +269,9 @@ int create_receiver()
 // returns 0 on success, -1 on error
 int find_server() {
 	
+	// if we're trying to find a server, it must mean that we are no longer in a room
+	inside_room = FALSE;
+	
 	int status;
 	struct addrinfo hints;
 	struct addrinfo *res;  // will point to the results
@@ -356,6 +363,8 @@ int find_server() {
 // assume receiver process is up, so shutdown_clean will work properly
 // given a flag for whether to register or not
 int try_reconnect() {
+	int was_inside_room = inside_room;
+	inside_room = FALSE;
 	
 	printf("\nServer connection lost\n");
 	fflush(stdout);
@@ -393,6 +402,45 @@ int try_reconnect() {
 	
 	printf("Reconnected>  ");
 	fflush(stdout);
+	
+	// now that we're reconnected, try to rejoin the room we were in
+	// we can call this because we at most recurse down one level
+	// since inside_room is reset to FALSE in find_server
+	int handle_create_room_req(char *room_name);
+	int handle_switch_room_req(char *room_name);
+	
+	
+	if (was_inside_room) {
+		char old_room[MAX_ROOM_NAME_LEN+1];
+		old_room[MAX_ROOM_NAME_LEN] = '\0';
+		strncpy(old_room, room, MAX_ROOM_NAME_LEN);
+		
+		// first try to rejoin
+		status = handle_switch_room_req(old_room);
+		if (status == 0) {
+			// everything good
+			printf("Rejoined room (%s)>  ", room);
+			fflush(stdout);
+		} else {
+			// otherwise try to create it again
+			status = handle_create_room_req(old_room);
+			if (status == 0) {
+				// good, so try to join again
+				status = handle_switch_room_req(old_room);
+				if (status == 0) {
+					printf("Joined recreated room (%s)>  ", room);
+					fflush(stdout);
+				} else {
+					printf("Couldn't joined recreated room (%s)>  ", room);
+					fflush(stdout);
+				}
+			} else {
+				printf("Couldn't rejoin previous room>  ");
+				fflush(stdout);
+			}
+		}
+	}
+	
 	return 0;
 }
 
@@ -666,6 +714,9 @@ int handle_switch_room_req(char *room_name)
 			case SWITCH_ROOM_SUCC:
 				// print out the members
 				printf("Successfully switched to room %s\n", room_name);
+				room[MAX_ROOM_NAME_LEN] = '\0';
+				strncpy(room, room_name, MAX_ROOM_NAME_LEN);
+				inside_room = TRUE;
 				ret = 0;
 				break;
 			case SWITCH_ROOM_FAIL:
@@ -987,7 +1038,11 @@ void get_user_input()
 	//char *result_str;
 	
 	while(TRUE) {
-		printf("\n[%s]>  ",member_name);
+		if (inside_room) {
+			printf("\n(%s)[%s]>  ", room, member_name);
+		} else {
+			printf("\n[%s]>  ",member_name);
+		}
 		fflush(stdout);
 		
 		// get ready for a select
@@ -1037,13 +1092,14 @@ void get_user_input()
 		}
 
 		/* Check if control message or chat message */
-
+		
+		/* buf probably ends with newline.  If so, get rid of it. */
+		int len = strlen(buf);
+		if (buf[len-1] == '\n') {
+			buf[len-1] = '\0';
+		}
+		
 		if (buf[0] == '!') {
-			/* buf probably ends with newline.  If so, get rid of it. */
-			int len = strlen(buf);
-			if (buf[len-1] == '\n') {
-				buf[len-1] = '\0';
-			}
 			handle_command_input(&buf[1]);
 		} else {
 			handle_chatmsg_input(buf);

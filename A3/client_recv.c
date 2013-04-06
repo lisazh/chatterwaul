@@ -139,7 +139,7 @@ void handle_received_msg(char *buf)
 	/**** YOUR CODE HERE ****/
   	//process message from server and output to user
 	struct chat_msghdr *recvd = (struct chat_msghdr*)buf;
-	printf("%s:\n", recvd->sender.member_name);
+	printf("%s::\n", recvd->sender.member_name);
 	char msgbd[recvd->msg_len+ 1];
 	strncpy(msgbd, (char *)recvd->msgdata, recvd->msg_len + 1);
 	//null terminate for safety
