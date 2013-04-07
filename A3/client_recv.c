@@ -49,6 +49,7 @@ void open_client_channel(int *qid) {
 		 */
 		exit(1);
 	}
+	printf("Client channel successful.\n");
 
 	return;
 }
@@ -135,11 +136,10 @@ void init_receiver()
 
 void handle_received_msg(char *buf)
 {
-
-	/**** YOUR CODE HERE ****/
   	//process message from server and output to user
 	struct chat_msghdr *recvd = (struct chat_msghdr*)buf;
 	printf("%s::\n", recvd->sender.member_name);
+	//for outputting data in msg
 	char msgbd[recvd->msg_len+ 1];
 	strncpy(msgbd, (char *)recvd->msgdata, recvd->msg_len + 1);
 	//null terminate for safety
@@ -205,7 +205,7 @@ void receive_msgs()
 		
 
 		//select timed out, so check for messages from control message queue
-		//msgflag is 1 to ensure no waiting? (check if correct)
+		//msgflag is set to make sure doesn't block
 		msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAIT);
 		if (msg.body.status == CHAT_QUIT){
 			// quit n stuff
@@ -213,11 +213,8 @@ void receive_msgs()
 				perror("close"); //ALTERNATIVELY: send_error to control???
 				exit(1);
 			}
-
 			break;
-
 	  	}
-
 	}
 
 	/* Cleanup */
@@ -228,9 +225,9 @@ void receive_msgs()
 
 int main(int argc, char **argv) {
 	char option;
-
-	printf("RECEIVER alive: parsing options! (argc = %d\n",argc);
-
+	
+	//printf("RECEIVER alive: parsing options! (argc = %d)\n",argc);
+	printf("RECEIVER alive!");
 	while((option = getopt(argc, argv, option_string)) != -1) {
 		switch(option) {
 		case 'f':
