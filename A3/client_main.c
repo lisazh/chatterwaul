@@ -70,9 +70,6 @@ int ctrl2rcvr_qid;
 // holds the last error message from a failed control message exchange
 char last_error_msg[MAX_MSGDATA+1] = "";
 
-// how many times a control message is retried
-#define MAX_CTRL_RETRIES 3
-
 // how many times a reconnection is tried
 #define MAX_CONNECT_RETRIES 5
 // delay between reconnection attempts in seconds
@@ -80,6 +77,10 @@ char last_error_msg[MAX_MSGDATA+1] = "";
 
 // seconds between sending out keep alives
 #define KEEP_ALIVE_PERIOD 30
+
+// two different types of errors that control message handlers can return
+#define REQUEST_ERROR (-1)
+#define CONNECTION_ERROR (-2)
 
 /************* FUNCTION DEFINITIONS ***********/
 
@@ -404,8 +405,6 @@ int try_reconnect() {
 	fflush(stdout);
 	
 	// now that we're reconnected, try to rejoin the room we were in
-	// we can call this because we at most recurse down one level
-	// since inside_room is reset to FALSE in find_server
 	int handle_create_room_req(char *room_name);
 	int handle_switch_room_req(char *room_name);
 	
@@ -448,7 +447,7 @@ int try_reconnect() {
 // returns if successful, and shuts down if not
 // returns whether a reconnect was necessary
 // used for any connection related calls
-int check(int cond) {
+int connection_check(int cond) {
 	if (!cond) {
 		try_reconnect();
 	}
@@ -501,15 +500,14 @@ void finish_handle(struct control_msghdr *ptr) {
 }
 
 // Assume we have server_host_name,server_tcp_port,member_name
-// this doesn't try to reconnect on error
 int handle_register_req()
 {
 	// try to send the message
 	struct control_msghdr *cmh = prepare_handle();
 	if (cmh == NULL) {
 		finish_handle(cmh);
-		strcpy(last_error_msg, "failed to connect\n");
-		return -1;
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
 	// package message to send to server
@@ -524,18 +522,20 @@ int handle_register_req()
 	
 	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
 	if (sent_length != cmh->msg_len) {
-		strcpy(last_error_msg, "failed to connect\n");
-		return -1;
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
 	// receive response
 	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
 	if (received_length < sizeof(struct control_msghdr)) {
-		strcpy(last_error_msg, "failed to connect\n");
-		return -1;
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 
-	int ret = -1;
+	int ret = REQUEST_ERROR;
 	
 	switch(cmh->msg_type) {
 		case REGISTER_SUCC:
@@ -546,12 +546,12 @@ int handle_register_req()
 		case REGISTER_FAIL:
 			// store the error message
 			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
-			ret = -1;
+			ret = REQUEST_ERROR;
 			break;
 		default:
 			// unexpected control message
 			error("Unexpected control message response");
-			ret = -1;
+			ret = REQUEST_ERROR;
 			break;
 	}
 	
@@ -563,241 +563,229 @@ int handle_register_req()
 int handle_room_list_req()
 {
 	// send the message
-	int i;
-	for (i = 0; i < MAX_CTRL_RETRIES; ++i) {
-		struct control_msghdr *cmh = prepare_handle();
-		if (check(cmh != NULL)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		cmh->msg_type = ROOM_LIST_REQUEST;
-		cmh->member_id = member_id;
-		cmh->msg_len = sizeof(struct control_msghdr);
-		
-		int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
-		if (check(sent_length == cmh->msg_len)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		// receive response
-		int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
-		if (check(received_length >= sizeof(struct control_msghdr))) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		int ret = -1;
-		
-		switch(cmh->msg_type) {
-			case ROOM_LIST_SUCC:
-				// print out the rooms
-				printf("%s\n", (char*)cmh->msgdata);
-				ret = 0;
-				break;
-			case ROOM_LIST_FAIL:
-				// store the error message
-				strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
-				ret = -1;
-				break;
-			default:
-				// unexpected control message
-				error("Unexpected control message response");
-				ret = -1;
-				break;
-		}
-		
+	struct control_msghdr *cmh = prepare_handle();
+	if (cmh == NULL) {
 		finish_handle(cmh);
-		
-		return ret;
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
-	strcpy(last_error_msg, "control message failed\n");
-	return -1;
+	cmh->msg_type = ROOM_LIST_REQUEST;
+	cmh->member_id = member_id;
+	cmh->msg_len = sizeof(struct control_msghdr);
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	if (sent_length != cmh->msg_len) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	if (received_length < sizeof(struct control_msghdr)) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	int ret = REQUEST_ERROR;
+	
+	switch(cmh->msg_type) {
+		case ROOM_LIST_SUCC:
+			// print out the rooms
+			printf("%s\n", (char*)cmh->msgdata);
+			ret = 0;
+			break;
+		case ROOM_LIST_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = REQUEST_ERROR;
+			break;
+		default:
+			// unexpected control message
+			error("Unexpected control message response");
+			ret = REQUEST_ERROR;
+			break;
+	}
+	
+	finish_handle(cmh);
+	
+	return ret;
 }
 
 int handle_member_list_req(char *room_name)
 {
 	// send the message
-	int i;
-	for (i = 0; i < MAX_CTRL_RETRIES; ++i) {
-		struct control_msghdr *cmh = prepare_handle();
-		if (check(cmh != NULL)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		cmh->msg_type = MEMBER_LIST_REQUEST;
-		cmh->member_id = member_id;
-		
-		strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
-		
-		cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
-		
-		int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
-		if (check(sent_length == cmh->msg_len)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		// receive response
-		int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
-		if (check(received_length >= sizeof(struct control_msghdr))) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		int ret = -1;
-		
-		switch(cmh->msg_type) {
-			case MEMBER_LIST_SUCC:
-				// print out the members
-				printf("%s\n", (char*)cmh->msgdata);
-				ret = 0;
-				break;
-			case MEMBER_LIST_FAIL:
-				// store the error message
-				strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
-				ret = -1;
-				break;
-			default:
-				// unexpected control message
-				error("Unexpected control message response");
-				ret = -1;
-				break;
-		}
-		
+	struct control_msghdr *cmh = prepare_handle();
+	if (cmh == NULL) {
 		finish_handle(cmh);
-		
-		return ret;
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
-	strcpy(last_error_msg, "control message failed\n");
-	return -1;
+	cmh->msg_type = MEMBER_LIST_REQUEST;
+	cmh->member_id = member_id;
+	
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
+	
+	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	if (sent_length != cmh->msg_len) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	if (received_length < sizeof(struct control_msghdr)) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	int ret = REQUEST_ERROR;
+	
+	switch(cmh->msg_type) {
+		case MEMBER_LIST_SUCC:
+			// print out the members
+			printf("%s\n", (char*)cmh->msgdata);
+			ret = 0;
+			break;
+		case MEMBER_LIST_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = REQUEST_ERROR;
+			break;
+		default:
+			// unexpected control message
+			error("Unexpected control message response");
+			ret = REQUEST_ERROR;
+			break;
+	}
+	
+	finish_handle(cmh);
+	
+	return ret;
 }
 
 int handle_switch_room_req(char *room_name)
 {
 	// send the message
-	int i;
-	for (i = 0; i < MAX_CTRL_RETRIES; ++i) {
-		struct control_msghdr *cmh = prepare_handle();
-		if (check(cmh != NULL)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		cmh->msg_type = SWITCH_ROOM_REQUEST;
-		cmh->member_id = member_id;
-		
-		strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
-		
-		cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
-		
-		int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
-		if (check(sent_length == cmh->msg_len)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		// receive response
-		int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
-		if (check(received_length >= sizeof(struct control_msghdr))) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		int ret = -1;
-		
-		switch(cmh->msg_type) {
-			case SWITCH_ROOM_SUCC:
-				// print out the members
-				printf("Successfully switched to room %s\n", room_name);
-				room[MAX_ROOM_NAME_LEN] = '\0';
-				strncpy(room, room_name, MAX_ROOM_NAME_LEN);
-				inside_room = TRUE;
-				ret = 0;
-				break;
-			case SWITCH_ROOM_FAIL:
-				// store the error message
-				strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
-				ret = -1;
-				break;
-			default:
-				// unexpected control message
-				error("Unexpected control message response");
-				ret = -1;
-				break;
-		}
-		
+	struct control_msghdr *cmh = prepare_handle();
+	if (cmh == NULL) {
 		finish_handle(cmh);
-		
-		return ret;
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
-	strcpy(last_error_msg, "control message failed\n");
-	return -1;
+	cmh->msg_type = SWITCH_ROOM_REQUEST;
+	cmh->member_id = member_id;
+	
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
+	
+	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	if (sent_length != cmh->msg_len) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	if (received_length < sizeof(struct control_msghdr)) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	int ret = REQUEST_ERROR;
+	
+	switch(cmh->msg_type) {
+		case SWITCH_ROOM_SUCC:
+			// print out the members
+			printf("Successfully switched to room %s\n", room_name);
+			room[MAX_ROOM_NAME_LEN] = '\0';
+			strncpy(room, room_name, MAX_ROOM_NAME_LEN);
+			inside_room = TRUE;
+			ret = 0;
+			break;
+		case SWITCH_ROOM_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = REQUEST_ERROR;
+			break;
+		default:
+			// unexpected control message
+			error("Unexpected control message response");
+			ret = REQUEST_ERROR;
+			break;
+	}
+	
+	finish_handle(cmh);
+	
+	return ret;
 }
 
 int handle_create_room_req(char *room_name)
 {
 	// send the message
-	int i;
-	for (i = 0; i < MAX_CTRL_RETRIES; ++i) {
-		struct control_msghdr *cmh = prepare_handle();
-		if (check(cmh != NULL)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		cmh->msg_type = CREATE_ROOM_REQUEST;
-		cmh->member_id = member_id;
-		
-		strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
-		
-		cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
-		
-		int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
-		if (check(sent_length == cmh->msg_len)) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		// receive response
-		int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
-		if (check(received_length >= sizeof(struct control_msghdr))) {
-			finish_handle(cmh);
-			continue;
-		}
-		
-		int ret = -1;
-		
-		switch(cmh->msg_type) {
-			case CREATE_ROOM_SUCC:
-				// print out the members
-				printf("Successfully created room %s\n", room_name);
-				ret = 0;
-				break;
-			case CREATE_ROOM_FAIL:
-				// store the error message
-				strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
-				ret = -1;
-				break;
-			default:
-				// unexpected control message
-				error("Unexpected control message response");
-				ret = -1;
-				break;
-		}
-		
+	struct control_msghdr *cmh = prepare_handle();
+	if (cmh == NULL) {
 		finish_handle(cmh);
-		
-		return ret;
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
 	}
 	
-	strcpy(last_error_msg, "control message failed\n");
-	return -1;
+	cmh->msg_type = CREATE_ROOM_REQUEST;
+	cmh->member_id = member_id;
+	
+	strncpy((char*)cmh->msgdata, room_name, MAX_MSGDATA-1);
+	
+	cmh->msg_len = sizeof(struct control_msghdr) + strlen(room_name)+1;
+	
+	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
+	if (sent_length != cmh->msg_len) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	// receive response
+	int received_length = recv(tcp_socket_fd, cmh, MAX_MSG_LEN, 0);
+	if (received_length < sizeof(struct control_msghdr)) {
+		finish_handle(cmh);
+		strcpy(last_error_msg, "failed to connect");
+		return CONNECTION_ERROR;
+	}
+	
+	int ret = REQUEST_ERROR;
+	
+	switch(cmh->msg_type) {
+		case CREATE_ROOM_SUCC:
+			// print out the members
+			printf("Successfully created room %s\n", room_name);
+			ret = 0;
+			break;
+		case CREATE_ROOM_FAIL:
+			// store the error message
+			strncpy(last_error_msg, (char*)cmh->msgdata, MAX_MSGDATA);
+			ret = REQUEST_ERROR;
+			break;
+		default:
+			// unexpected control message
+			error("Unexpected control message response");
+			ret = REQUEST_ERROR;
+			break;
+	}
+	
+	finish_handle(cmh);
+	
+	return ret;
 }
 
 int handle_quit_req()
@@ -827,13 +815,12 @@ int handle_quit_req()
 	return 0;
 }
 
-// doesn't try to reconnect
 int send_member_keep_alive() {
 	// send the message
 	struct control_msghdr *cmh = prepare_handle();
 	if (cmh == NULL) {
 		finish_handle(cmh);
-		return -1;
+		return CONNECTION_ERROR;
 	}
 	
 	cmh->msg_type = MEMBER_KEEP_ALIVE;
@@ -844,7 +831,7 @@ int send_member_keep_alive() {
 	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
 	if (sent_length != cmh->msg_len) {
 		finish_handle(cmh);
-		return -1;
+		return CONNECTION_ERROR;
 	}
 	
 	// no response necessary
@@ -881,7 +868,7 @@ int init_client()
 	/* 4. register with chat server */
 	
 	status = handle_register_req();
-	check(status == 0);
+	connection_check(status == 0);
 	
 	return 0;
 }
@@ -917,7 +904,7 @@ void handle_chatmsg_input(char *inputdata)
 	
 	int sent_length = send(udp_socket_fd, chmh, chmh->msg_len, 0);
 	// even though this is udp, check anyway
-	check(sent_length == chmh->msg_len);
+	connection_check(sent_length == chmh->msg_len);
 	
 	free(buf);
 	
@@ -1019,6 +1006,9 @@ void handle_command_input(char *line)
 		printf("Error encountered: %s\n", last_error_msg);
 	}
 	
+	// reconnect if there was a connection error
+	connection_check(result != CONNECTION_ERROR);
+	
 
 	return;
 }
@@ -1064,7 +1054,7 @@ void get_user_input()
 			time_t elapsed = time(NULL) - start;
 			if (status == 0 || elapsed >= KEEP_ALIVE_PERIOD) {
 				status = send_member_keep_alive();
-				check(status == 0);
+				connection_check(status == 0);
 				
 				start = time(NULL);
 				elapsed = 0;
