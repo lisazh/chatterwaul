@@ -925,8 +925,8 @@ void handle_chatmsg_input(char *inputdata)
 	chmh->msg_len = sizeof(struct chat_msghdr) + strlen(inputdata)+1;
 	
 	int sent_length = send(udp_socket_fd, chmh, chmh->msg_len, 0);
-	// even though this is udp, check anyway
-	connection_check(sent_length == chmh->msg_len);
+	// even though this is udp, check anyway for errors
+	connection_check(sent_length >= 0);
 	
 	free(buf);
 	
