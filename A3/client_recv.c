@@ -92,13 +92,10 @@ void init_receiver()
 
 	open_client_channel(&ctrl2rcvr_qid);
 
-	/**** YOUR CODE TO FILL IMPLEMENT STEPS 2 AND 3 ****/
-
 	/* 2. Initialize UDP socket for receiving chat messages. */
 
 	struct sockaddr_in servaddr;
 	socklen_t slen = sizeof(servaddr); 
-	//assuming we don't have a specific protocol in mind?
 	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0){
 		send_error(ctrl2rcvr_qid, SOCKET_FAILED);
 		exit(1);
@@ -106,8 +103,9 @@ void init_receiver()
 	
 	bzero(&servaddr, sizeof(servaddr));
 	servaddr.sin_family = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	servaddr.sin_port = 0;
+	//convert to network byte order, due to server expectations
+	servaddr.sin_addr.s_addr = htonl(INADDR_ANY); 
+	servaddr.sin_port = 0; //let kernel choose port for us
 	
 	/* 3. Tell parent the port number if successful, or failure code if not. 
 	 *    Use the send_error and send_ok functions
@@ -119,10 +117,8 @@ void init_receiver()
 	}
 	 
 	if (getsockname(sockfd, (struct sockaddr *)&servaddr, &slen) < 0){
-
 	  send_error(ctrl2rcvr_qid, NAME_FAILED);
 	  exit(1);
-
 	}
 
 	send_ok(ctrl2rcvr_qid, servaddr.sin_port);
@@ -169,7 +165,6 @@ void receive_msgs()
 		exit(1);
 	}
 
-	/**** YOUR CODE HERE ****/
 	//for the message queue
 	msg_t msg;
 	
@@ -184,9 +179,8 @@ void receive_msgs()
 
 	while(TRUE) {
 
-		/**** YOUR CODE HERE ****/
-		//check if server has sent a message over
 		//set how long to wait for server messages
+		//done inside loop as select can update it on each call
 		wtime.tv_sec = 5; 
 		wtime.tv_usec = 0;
 		readset = readset_orig;
@@ -196,6 +190,7 @@ void receive_msgs()
 			exit(1);
 		}
 
+		//check if server has sent a message over
 		if(FD_ISSET(sockfd, &readset)){
 			memset(buf, 0, MAX_MSG_LEN);
 			recv(sockfd, buf, MAX_MSG_LEN, 0);
@@ -208,9 +203,9 @@ void receive_msgs()
 		//msgflag is set to make sure doesn't block
 		msgrcv(ctrl2rcvr_qid, &msg, sizeof(msg_t), RECV_TYPE, IPC_NOWAIT);
 		if (msg.body.status == CHAT_QUIT){
-			// quit n stuff
+			// clean up
 			if (close(sockfd) < 0){
-				perror("close"); //ALTERNATIVELY: send_error to control???
+				perror("close"); 
 				exit(1);
 			}
 			break;

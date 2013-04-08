@@ -97,11 +97,10 @@ int retrieve_chatserver_info(char *chatserver_name, u_int16_t *tcp_port, u_int16
 	/* The code you write should initialize locn_socket_fd so that
 	 * it is valid for the write() in the next step.
 	 */
-	/**** YOUR CODE HERE ****/
 	
 	int status;
 	struct addrinfo hints;
-	struct addrinfo *res;  // will point to the results
+	struct addrinfo *res;  // pointer for the results
 	
 	memset(&hints, 0, sizeof(hints)); // make sure the struct is empty
 	hints.ai_family = AF_INET;
@@ -152,13 +151,12 @@ int retrieve_chatserver_info(char *chatserver_name, u_int16_t *tcp_port, u_int16
 	sscanf(buf, "%*s %d%n", &code, &n);
 
 
-	/**** YOUR CODE HERE ****/
-	if (code >= 200 && code < 300) {
-		// success!
+	if (code >= 200 && code < 300) { // success!
+		
 		int eol = find_nn(buf, MAX_MSG_LEN);
 		assert(eol >= 0);
 		
-		printf("HTTP %d", code);
+		//printf("HTTP %d", code); // for debugging
 		int i;
 		for (i = n; i < eol; ++i) {
 			putchar(buf[i]);
@@ -170,8 +168,7 @@ int retrieve_chatserver_info(char *chatserver_name, u_int16_t *tcp_port, u_int16
 		sscanf(body, "%s %hu %hu", chatserver_name, tcp_port, udp_port);
 		
 	} else {
-		// not success
-		// so print out status and message
+		// not success, so print out status and message
 		int eol = find_nn(buf, MAX_MSG_LEN);
 		assert(eol >= 0);
 		

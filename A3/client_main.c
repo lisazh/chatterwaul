@@ -329,8 +329,7 @@ int find_server() {
 		return -1;
 	}
 	
-	// make a udp socket
-	// clean up an old one if necessary
+	// make a udp socket; clean up an old one if necessary
 	if (udp_socket_fd >= 0) {
 		close(udp_socket_fd);
 		udp_socket_fd = -1;
@@ -361,7 +360,7 @@ int find_server() {
 // try several times to reconnect to the server and register
 // 0 on success, shuts down on failure
 // we shut down on failure because there isn't much more we can do
-// assume receiver process is up, so shutdown_clean will work properly
+// assume receiver process is (still) up, shutdown_clean will work properly
 // given a flag for whether to register or not
 int try_reconnect() {
 	int was_inside_room = inside_room;
@@ -430,7 +429,7 @@ int try_reconnect() {
 					printf("Joined recreated room (%s)>  ", room);
 					fflush(stdout);
 				} else {
-					printf("Couldn't joined recreated room (%s)>  ", room);
+					printf("Couldn't join recreated room (%s)>  ", room);
 					fflush(stdout);
 				}
 			} else {
@@ -487,7 +486,10 @@ struct control_msghdr *prepare_handle() {
 	return (struct control_msghdr*)buf;
 }
 
-// always call this to finish handling a control message
+/*
+ * Helper function for cleaning up after handling a control message.
+ * Closes TCP connection and frees used pointer.
+ */
 void finish_handle(struct control_msghdr *ptr) {
 	// finish the exchange and close the connection
 	if (ptr != NULL) {
@@ -499,7 +501,10 @@ void finish_handle(struct control_msghdr *ptr) {
 	}
 }
 
-// Assume we have server_host_name,server_tcp_port,member_name
+/* 
+ * Helper function to handle REGISTER_REQUEST control messages.
+ * Assume we have server_host_name,server_tcp_port,member_name
+ */
 int handle_register_req()
 {
 	// try to send the message
@@ -514,7 +519,7 @@ int handle_register_req()
 	struct register_msgdata *rdata = (struct register_msgdata*)cmh->msgdata;
 	
 	cmh->msg_type = REGISTER_REQUEST;
-	rdata->udp_port = client_udp_port; 
+	rdata->udp_port = client_udp_port; //assumed already in network order
 	
 	strncpy((char*)rdata->member_name, member_name, MAX_MSGDATA-1);
 	
@@ -559,6 +564,11 @@ int handle_register_req()
 	
 	return ret;
 }
+
+/* 
+ * Helper function to handle ROOM_LIST_REQUEST control messages.
+ * Assume we have server_host_name,server_tcp_port,member_name
+ */
 
 int handle_room_list_req()
 {
@@ -614,6 +624,10 @@ int handle_room_list_req()
 	return ret;
 }
 
+/* 
+ * Helper function to handle MEMBER_LIST_REQUEST control messages.
+ * Assume we have server_host_name,server_tcp_port,member_name
+ */ 
 int handle_member_list_req(char *room_name)
 {
 	// send the message
@@ -671,6 +685,10 @@ int handle_member_list_req(char *room_name)
 	return ret;
 }
 
+/* 
+ * Helper function to handle SWITCH_ROOM_REQUEST control messages.
+ * Assume we have server_host_name,server_tcp_port,member_name
+ */
 int handle_switch_room_req(char *room_name)
 {
 	// send the message
@@ -731,6 +749,10 @@ int handle_switch_room_req(char *room_name)
 	return ret;
 }
 
+/* 
+ * Helper function to handle CREATE_ROOM_REQUEST control messages.
+ * Assume we have server_host_name,server_tcp_port,member_name
+ */
 int handle_create_room_req(char *room_name)
 {
 	// send the message
@@ -788,6 +810,9 @@ int handle_create_room_req(char *room_name)
 	return ret;
 }
 
+/* 
+ * Helper function to handle QUIT_REQUEST control messages.
+ */
 int handle_quit_req()
 {
 	// send the message
@@ -806,7 +831,6 @@ int handle_quit_req()
 	send(tcp_socket_fd, cmh, cmh->msg_len, 0);
 	
 	// no response necessary
-	
 	finish_handle(cmh);
 	
 	// now we shutdown
@@ -815,8 +839,12 @@ int handle_quit_req()
 	return 0;
 }
 
+/*
+ * Helper function to send a MEMBER_KEEP_ALIVE control message
+ * to the server to guard against server sweeps and check if the 
+ * server is still there or not. 
+ */
 int send_member_keep_alive() {
-	// send the message
 	struct control_msghdr *cmh = prepare_handle();
 	if (cmh == NULL) {
 		finish_handle(cmh);
@@ -828,6 +856,7 @@ int send_member_keep_alive() {
 	
 	cmh->msg_len = sizeof(struct control_msghdr);
 	
+	// send the message
 	int sent_length = send(tcp_socket_fd, cmh, cmh->msg_len, 0);
 	if (sent_length != cmh->msg_len) {
 		finish_handle(cmh);
@@ -841,14 +870,10 @@ int send_member_keep_alive() {
 	return 0;
 }
 
-int init_client()
-{
-	/* Initialize client so that it is ready to start exchanging messages
-	 * with the chat server.
-	 *
-	 * YOUR CODE HERE
-	 */
-	
+/* Initialize client so that it is ready to start exchanging messages
+ * with the chat server.
+ */
+int init_client(){
 	// as of here, we should have access to:
 	// server_host_name,server_tcp_port,server_udp_port,member_name
 	
@@ -874,13 +899,12 @@ int init_client()
 }
 
 
-
+/* Function to package data from user input into msgdata field of chat_msghdr 
+ * and send it to chat server.
+ * inputdata is a pointer to the message that the user typed in.
+ */ 
 void handle_chatmsg_input(char *inputdata)
 {
-	/* inputdata is a pointer to the message that the user typed in.
-	 * This function should package it into the msgdata field of a chat_msghdr
-	 * struct and send the chat message to the chat server.
-	 */
 
 	char *buf = (char *)malloc(MAX_MSG_LEN);
   
@@ -892,8 +916,6 @@ void handle_chatmsg_input(char *inputdata)
 	
 	bzero(buf, MAX_MSG_LEN);
 	
-	
-	/**** YOUR CODE HERE ****/
 	// assume inputdata is restricted in size and null-terminated
 	
 	// assemble the chat message
@@ -912,11 +934,10 @@ void handle_chatmsg_input(char *inputdata)
 }
 
 
-/* This should be called with the leading "!" stripped off the original
+/* Function to process control messages from user and call the appropriate
+ * helper function. 
+ * This should be called with the leading "!" stripped off the original
  * input line.
- * 
- * You can change this function in any way you like.
- *
  */
 void handle_command_input(char *line)
 {
@@ -1013,6 +1034,10 @@ void handle_command_input(char *line)
 	return;
 }
 
+/* Function that manages user prompts, takes in the received input and calls
+ * the appropriate handling function (depending on if it was a control 
+ * or chat msg).
+ */ 
 void get_user_input()
 {
 	// initialize data needed for a select call
@@ -1044,7 +1069,7 @@ void get_user_input()
 			// pselect doesn't modify waittime
 			status = pselect(1, &readfds, NULL, NULL, &waittime, NULL);
 			
-			// handle stuff
+			// errored so we quit
 			if (status < 0) {
 				perror("select()");
 				shutdown_clean();
